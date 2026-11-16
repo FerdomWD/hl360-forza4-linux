@@ -38,6 +38,35 @@
 #include "../../src/crash_handler.h"
 #include "../../src/wheel.h"
 #include "i18n.h"
+
+#ifndef _WIN32
+#include <fontconfig/fontconfig.h>
+
+static std::string QueryFontConfig(const char* pattern) {
+  FcConfig* config = FcInitLoadConfigAndFonts();
+  if (!config) return "";
+  FcPattern* pat = FcNameParse(reinterpret_cast<const FcChar8*>(pattern));
+  if (!pat) {
+    FcConfigDestroy(config);
+    return "";
+  }
+  FcConfigSubstitute(config, pat, FcMatchPattern);
+  FcDefaultSubstitute(pat);
+  FcResult result;
+  FcPattern* font = FcFontMatch(config, pat, &result);
+  std::string path;
+  if (font) {
+    FcChar8* file = nullptr;
+    if (FcPatternGetString(font, FC_FILE, 0, &file) == FcResultMatch && file) {
+      path = reinterpret_cast<const char*>(file);
+    }
+    FcPatternDestroy(font);
+  }
+  FcPatternDestroy(pat);
+  FcConfigDestroy(config);
+  return path;
+}
+#endif
 #include "installer.h"
 #include "graphics_fixes.h"
 #include "settings.h"
@@ -205,6 +234,32 @@ bool LoadCover(SDL_GPUDevice* gpu, const fs::path& file, Cover& out) {
   out.width = w;
   out.height = h;
   return out.texture && out.sampler;
+}
+
+void SetAppIcon(SDL_Window* window, const fs::path& exe_dir) {
+  const fs::path candidates[] = {
+    exe_dir / "fm4pc.ico",
+    exe_dir / "resources" / "icon_256.png",
+    exe_dir.parent_path() / "fm4pc.ico",
+    exe_dir.parent_path() / "resources" / "icon_256.png",
+  };
+  for (const auto& p : candidates) {
+    if (!fs::exists(p)) continue;
+    std::ifstream in(p, std::ios::binary);
+    const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    int w = 0, h = 0, channels = 0;
+    stbi_uc* pixels = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(data.data()),
+                                            int(data.size()), &w, &h, &channels, 4);
+    if (pixels) {
+      SDL_Surface* surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+      if (surface) {
+        SDL_SetWindowIcon(window, surface);
+        SDL_DestroySurface(surface);
+      }
+      stbi_image_free(pixels);
+      break;
+    }
+  }
 }
 
 // --- Wheel tab ---------------------------------------------------------------
@@ -630,6 +685,7 @@ struct App {
   std::vector<ManifestEntry> manifest;
   Tab tab = Tab::kProfiles;
   std::string notice;
+  std::string shortcut_status;
 
   // Install / verify state
   enum class GameState { kUnknown, kMissing, kIncomplete, kUnverified, kVerified };
@@ -996,6 +1052,78 @@ struct App {
     }
   }
 
+  void CreateDesktopShortcut() {
+    fs::path instant_exe = exe_dir / "Forza Motorsport 4";
+    if (!fs::exists(instant_exe)) {
+      instant_exe = exe_dir / "fm4-launcher";
+    }
+    fs::path icon_path = exe_dir / "resources" / "icon_256.png";
+    if (!fs::exists(icon_path)) {
+      icon_path = exe_dir / "fm4pc.ico";
+    }
+    if (!fs::exists(icon_path)) {
+      icon_path = exe_dir.parent_path() / "fm4pc.ico";
+    }
+
+    std::string desktop_content =
+        "[Desktop Entry]\n"
+        "Version=1.0\n"
+        "Type=Application\n"
+        "Name=Forza Motorsport 4\n"
+        "GenericName=Racing Simulation\n"
+        "Comment=Forza Motorsport 4 PC Port\n"
+        "Exec=\"" + instant_exe.u8string() + "\"\n"
+        "Path=" + exe_dir.u8string() + "\n"
+        "Icon=" + icon_path.u8string() + "\n"
+        "Terminal=false\n"
+        "Categories=Game;Simulation;\n"
+        "StartupNotify=true\n"
+        "StartupWMClass=fm4\n";
+
+    std::error_code ec;
+    bool created_any = false;
+
+    const char* home = getenv("HOME");
+    if (home) {
+      // 1. Applications menu (~/.local/share/applications)
+      fs::path apps_dir = fs::path(home) / ".local" / "share" / "applications";
+      fs::create_directories(apps_dir, ec);
+      fs::path app_desktop = apps_dir / "forza-motorsport-4.desktop";
+      std::ofstream out(app_desktop);
+      if (out << desktop_content) {
+        out.close();
+        fs::permissions(app_desktop, fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec |
+                                     fs::perms::group_read | fs::perms::group_exec |
+                                     fs::perms::others_read | fs::perms::others_exec,
+                        fs::perm_options::replace, ec);
+        created_any = true;
+      }
+
+      // 2. Desktop folder (~/Desktop)
+      fs::path desktop_dir = fs::path(home) / "Desktop";
+      if (fs::is_directory(desktop_dir, ec)) {
+        fs::path file_desktop = desktop_dir / "Forza Motorsport 4.desktop";
+        std::ofstream desk_out(file_desktop);
+        if (desk_out << desktop_content) {
+          desk_out.close();
+          fs::permissions(file_desktop, fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec |
+                                        fs::perms::group_read | fs::perms::group_exec |
+                                        fs::perms::others_read | fs::perms::others_exec,
+                          fs::perm_options::replace, ec);
+          std::string cmd = "gio set \"" + file_desktop.u8string() + "\" metadata::trusted true 2>/dev/null";
+          (void)system(cmd.c_str());
+          created_any = true;
+        }
+      }
+    }
+
+    if (created_any) {
+      shortcut_status = L("Shortcut created on Desktop & Menu!", "¡Acceso directo creado en el escritorio y menú!");
+    } else {
+      shortcut_status = L("Could not create shortcut.", "No se pudo crear el acceso directo.");
+    }
+  }
+
   // Logs exist to explain failures: after a clean exit, remove the ones this
   // session wrote (fm4_NNN.log and its rotations). Crash reports stay.
   void DeleteSessionLogs() {
@@ -1202,45 +1330,53 @@ void StatusDot(const ImVec4& color) {
 
 // --- Left column: cover, profile, play ------------------------------------
 
-float CoverWidth() { return S(400); }
-float CoverHeight(const App& app) {
-  const float aspect = app.cover.texture ? float(app.cover.height) / float(app.cover.width) : 0.76f;
-  return CoverWidth() * aspect;
+float CoverWidth(float total_w = 0.0f) {
+  if (total_w > 0.0f) {
+    return std::clamp(total_w * 0.28f, S(300), S(380));
+  }
+  return S(320);
 }
-float SettingsWidth() { return S(800); }
-float WindowHeight() { return S(840); }
+float SettingsWidth() { return S(740); }
+float WindowHeight() { return S(680); }
 
 void CoverPanel(App& app, const ImVec2& size) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 p0 = ImGui::GetCursorScreenPos();
-  // A short window shrinks the cover, keeping its aspect, so the profile and
-  // the play button under it stay in sight.
-  const float full_h = CoverHeight(app);
-  const float cover_h = std::clamp(size.y - S(330), std::min(S(140), full_h), full_h);
-  const float cover_w = size.x * cover_h / full_h;
-  const ImVec2 c0(p0.x + (size.x - cover_w) / 2, p0.y);
-  const ImVec2 p1(c0.x + cover_w, p0.y + cover_h);
 
   // Column background, a darker shade of the card colour.
   dl->AddRectFilled(p0, ImVec2(p0.x + size.x, p0.y + size.y), Col(ImVec4(0.085f, 0.09f, 0.10f, 1)));
+
+  float banner_h = 0.0f;
   if (app.cover.texture) {
-    dl->AddImage(app.cover.id(), c0, p1);
+    const float aspect = float(app.cover.height) / float(app.cover.width);
+    const float full_h = size.x * aspect;
+    const float max_h = std::max(S(120), size.y - S(330));
+    banner_h = std::min(full_h, max_h);
+    const ImVec2 c0 = p0;
+    const ImVec2 c1(p0.x + size.x, p0.y + banner_h);
+    const ImVec2 uv0(0.0f, 0.0f);
+    const ImVec2 uv1(1.0f, banner_h / full_h);
+    dl->AddImage(app.cover.id(), c0, c1, uv0, uv1);
   } else {
-    // No cover yet (Disc 1 not installed): a panel in the logo's colours.
-    dl->AddRectFilledMultiColor(c0, p1, IM_COL32(48, 50, 56, 255), IM_COL32(30, 31, 36, 255),
-                                IM_COL32(14, 14, 16, 255), IM_COL32(24, 25, 29, 255));
-    ImGui::PushFont(g_bold, ImGui::GetStyle().FontSizeBase * 2.6f);
-    dl->AddText(ImVec2(c0.x + S(28), p0.y + S(70) * cover_h / full_h), Col(kAccent), "FORZA");
+    // Clean full-width Forza Motorsport 4 branding banner
+    banner_h = std::clamp(size.y * 0.25f, S(140), S(175));
+    const ImVec2 c0 = p0;
+    const ImVec2 c1(p0.x + size.x, p0.y + banner_h);
+    dl->AddRectFilledMultiColor(c0, c1, IM_COL32(40, 42, 48, 255), IM_COL32(26, 28, 33, 255),
+                                IM_COL32(14, 15, 17, 255), IM_COL32(20, 21, 25, 255));
+    dl->AddLine(ImVec2(c0.x, c1.y), c1, IM_COL32(52, 55, 64, 255), 1.0f);
+    ImGui::PushFont(g_bold, ImGui::GetStyle().FontSizeBase * 2.4f);
+    dl->AddText(ImVec2(p0.x + S(22), p0.y + S(38)), Col(kAccent), "FORZA");
     ImGui::PopFont();
-    ImGui::PushFont(g_bold, ImGui::GetStyle().FontSizeBase * 1.4f);
-    dl->AddText(ImVec2(c0.x + S(30), p0.y + S(130) * cover_h / full_h), IM_COL32(235, 235, 240, 235), "MOTORSPORT 4");
+    ImGui::PushFont(g_bold, ImGui::GetStyle().FontSizeBase * 1.35f);
+    dl->AddText(ImVec2(p0.x + S(24), p0.y + S(92)), IM_COL32(235, 235, 240, 240), "MOTORSPORT 4");
     ImGui::PopFont();
   }
 
   // Controls under the cover.
-  const float pad = S(22);
+  const float pad = S(20);
   const float inner_w = size.x - pad * 2;
-  ImGui::SetCursorScreenPos(ImVec2(p0.x + pad, p1.y + S(18)));
+  ImGui::SetCursorScreenPos(ImVec2(p0.x + pad, p0.y + banner_h + S(16)));
   ImGui::BeginGroup();
   ImGui::PushStyleColor(ImGuiCol_Text, kDim);
   ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 0.85f);
@@ -1318,15 +1454,28 @@ void CoverPanel(App& app, const ImVec2& size) {
     ImGui::PushFont(g_bold, ImGui::GetStyle().FontSizeBase * 1.45f);
     if (app.Installed()) {
       ImGui::BeginDisabled(app.game != nullptr);
-      if (PrimaryButton(app.game ? L("PLAYING", "EN JUEGO") : L("PLAY", "JUGAR"), ImVec2(inner_w, S(62)))) {
+      if (PrimaryButton(app.game ? L("PLAYING", "EN JUEGO") : L("PLAY", "JUGAR"), ImVec2(inner_w, S(58)))) {
         app.LaunchGame();
       }
       ImGui::EndDisabled();
-    } else if (PrimaryButton(L("INSTALL", "INSTALAR"), ImVec2(inner_w, S(62)))) {
-      app.tab = Tab::kInstall;
+      ImGui::PopFont();
+      ImGui::PopStyleVar();
+
+      ImGui::Dummy(ImVec2(0, S(4)));
+      if (ImGui::Button(L("Create desktop shortcut", "Crear acceso directo"), ImVec2(inner_w, S(32)))) {
+        app.CreateDesktopShortcut();
+      }
+      if (!app.shortcut_status.empty()) {
+        ImGui::Dummy(ImVec2(0, S(2)));
+        TextColored(kOk, app.shortcut_status.c_str());
+      }
+    } else {
+      if (PrimaryButton(L("INSTALL", "INSTALAR"), ImVec2(inner_w, S(58)))) {
+        app.tab = Tab::kInstall;
+      }
+      ImGui::PopFont();
+      ImGui::PopStyleVar();
     }
-    ImGui::PopFont();
-    ImGui::PopStyleVar();
   }
   if (app.task.state == TaskProgress::State::kFailed) {
     ImGui::PushTextWrapPos(p0.x + size.x - pad);
@@ -1619,9 +1768,12 @@ void TabGraphics(App& app) {
   TextColored(kBad, preset_details[std::clamp(s.graphics_preset, 0, 3)]);
   if (s.graphics_preset == 3 && BeginRows("##q")) {
     Row(L("Render scale", "Escala de renderizado"));
-    changed |= Segmented<int>("scale", s.resolution_scale,
-                              {{1, "1x 720p"}, {2, "2x 1440p"},
-                               {3, "3x 4K"}, {4, "4x 5K"}});
+    changed |= Segmented<double>("scale", s.resolution_scale,
+                                 {{1.0, "1x 720p"},
+                                  {1.5, "1.5x 1080p"},
+                                  {2.0, "2x 1440p"},
+                                  {3.0, "3x 4K"},
+                                  {4.0, "4x 5K"}});
     Row(L("Anisotropic filtering", "Filtrado anisotropico"));
     changed |= Combo<int>("##aniso", s.anisotropic_override,
         {{0, L("Off", "No")}, {1, "1x"}, {2, "2x"}, {3, "4x"}, {4, "8x"}, {5, "16x"}});
@@ -2766,7 +2918,11 @@ void TabInstall(App& app) {
         [&app, zip, update, base_game, base_user, mode] {
           if (!app.RunVerify(base_game)) return false;
           app.task.done = 0; app.task.total = 0;
+#ifdef _WIN32
           return InstallForzaPlus(app.exe_dir / "install-forza-plus.ps1", zip, update,
+#else
+          return InstallForzaPlus(app.exe_dir / "install-forza-plus.py", zip, update,
+#endif
                                   base_game, base_user, mode, app.task);
         });
   }
@@ -2778,7 +2934,11 @@ void TabInstall(App& app) {
     if(ImGui::Button(L("Uninstall Forza Plus", "Desinstalar Forza Plus"))) {
       if(app.PlusActive()) app.SelectPlus(false);
       app.StartTask(L("Uninstall Forza Plus", "Desinstalar Forza Plus"),App::TaskKind::kRemoveForzaPlus,
+#ifdef _WIN32
           [&app,base_game,base_user] {return UninstallForzaPlus(app.exe_dir/"uninstall-forza-plus.ps1",base_game,base_user,app.task);});
+#else
+          [&app,base_game,base_user] {return UninstallForzaPlus(app.exe_dir/"uninstall-forza-plus.py",base_game,base_user,app.task);});
+#endif
     }
     ImGui::TextWrapped("%s",L("Uninstall preserves saves and the original game. Reinstall afterwards to choose another career mode.",
         "Desinstalar conserva las partidas y el juego original. Despues puedes reinstalar eligiendo otro modo de carrera."));
@@ -3064,7 +3224,11 @@ int RunHeadless(int argc, char** argv) {
         ok = false;
       } else {
         ok = InstallContentDisc(fs::u8path(iso), fs::u8path(dir), fs::u8path(user_dir),
+#ifdef _WIN32
                                 exe_dir / "fm4tool.exe", progress);
+#else
+                                exe_dir / "fm4tool", progress);
+#endif
         log << "content: " << (ok ? "ok" : "FAILED") << " - " << progress.Status() << std::endl;
         log << "packages: " << CountContentPackages(fs::u8path(user_dir)) << "/" << kContentPackages << std::endl;
       }
@@ -3127,8 +3291,13 @@ int main(int argc, char** argv) {
   app.port_config = app.exe_dir / "fm4.toml";
   app.launcher_config = app.exe_dir / "launcher.toml";
   app.manifest_path = app.exe_dir / "game_files.sha256";
+#ifdef _WIN32
   app.game_exe = app.exe_dir / "fm4.exe";
   app.tool_exe = app.exe_dir / "fm4tool.exe";
+#else
+  app.game_exe = app.exe_dir / "fm4";
+  app.tool_exe = app.exe_dir / "fm4tool";
+#endif
   app.cover_path = app.exe_dir / "cover.jpg";
   app.Load();
   app.manifest = LoadManifest(app.manifest_path);
@@ -3139,19 +3308,45 @@ int main(int argc, char** argv) {
   app.CheckGame();
   if (!app.Installed()) app.tab = Tab::kInstall;
 
-  g_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-  if (g_scale <= 0) g_scale = 1.0f;
-  // The usual fixed size, shrunk to fit the display's usable area, and
-  // resizable: on some multi-monitor setups it opened taller than the screen.
-  int window_w = int(CoverWidth() + SettingsWidth()), window_h = int(WindowHeight());
+  float content_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+  if (content_scale <= 0.0f) content_scale = 1.0f;
+
   SDL_Rect usable{};
-  if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable) && usable.w > 0 && usable.h > 0) {
-    window_w = std::min(window_w, usable.w * 95 / 100);
-    window_h = std::min(window_h, usable.h * 92 / 100);
+  SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable);
+
+  // Logical base dimensions of the launcher UI:
+  // Cover panel: 320, Settings panel: 740 -> Total: 1060 x 680
+  const float base_w = 1060.0f;
+  const float base_h = 680.0f;
+
+  // Modern compositors (Wayland, macOS, Windows) treat SDL_CreateWindow dimensions
+  // as logical points and scale the window automatically by display scaling.
+  // If logical usable height is <= 950 (such as 1080p @ 125% where usable height is ~820-864,
+  // or 1366x768 / Steam Deck 1280x800), lock g_scale to 1.0f so the window leaves comfortable
+  // margins around the screen.
+  if (usable.h > 0 && usable.h <= 950) {
+    g_scale = 1.0f;
+  } else if (usable.h > 0 && usable.w > 0) {
+    if (base_h * content_scale > usable.h * 0.85f) {
+      g_scale = 1.0f;
+    } else {
+      float max_scale = std::min((usable.w * 0.80f) / base_w, (usable.h * 0.82f) / base_h);
+      g_scale = std::clamp(content_scale, 1.0f, std::max(1.0f, max_scale));
+    }
+  } else {
+    g_scale = 1.0f;
+  }
+
+  int window_w = int(CoverWidth() + SettingsWidth());
+  int window_h = int(WindowHeight());
+  if (usable.w > 0 && usable.h > 0) {
+    window_w = std::min(window_w, int(usable.w * 0.90f));
+    window_h = std::min(window_h, int(usable.h * 0.88f));
   }
   app.window = SDL_CreateWindow("Forza Motorsport 4 Launcher", window_w, window_h,
                                 SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE);
-  SDL_SetWindowMinimumSize(app.window, std::min(window_w, int(S(900))), std::min(window_h, int(S(480))));
+  SDL_SetWindowMinimumSize(app.window, std::min(window_w, int(S(800))), std::min(window_h, int(S(460))));
+  SetAppIcon(app.window, app.exe_dir);
   // The SDK's SDL3 is built without the 2D renderer; SDL_GPU (D3D12 on
   // Windows, Vulkan elsewhere) is what it has.
   SDL_GPUDevice* gpu = SDL_CreateGPUDevice(
@@ -3163,7 +3358,11 @@ int main(int argc, char** argv) {
     return 1;
   }
   app.gpu = gpu;
-  SDL_SetGPUSwapchainParameters(gpu, app.window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_VSYNC);
+  SDL_GPUPresentMode present_mode = SDL_GPU_PRESENTMODE_VSYNC;
+  if (SDL_WindowSupportsGPUPresentMode(gpu, app.window, SDL_GPU_PRESENTMODE_MAILBOX)) {
+    present_mode = SDL_GPU_PRESENTMODE_MAILBOX;
+  }
+  SDL_SetGPUSwapchainParameters(gpu, app.window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, present_mode);
   const SDL_GPUTextureFormat swap_format = SDL_GetGPUSwapchainTextureFormat(gpu, app.window);
   if (fs::exists(app.cover_path)) LoadCover(gpu, app.cover_path, app.cover);
   app.reload_cover = false;
@@ -3175,21 +3374,95 @@ int main(int argc, char** argv) {
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = nullptr;
   ApplyStyle();
-  const float font_size = 17.0f * g_scale;
-  const char* regular = "C:\\Windows\\Fonts\\segoeui.ttf";
-  const char* bold = "C:\\Windows\\Fonts\\seguisb.ttf";
-  // Segoe UI lacks arrows and a few symbols (â†º â† â†‘); merge Segoe UI Symbol in.
-  const char* symbols = "C:\\Windows\\Fonts\\seguisym.ttf";
-  ImFontConfig merge;
-  merge.MergeMode = true;
-  if (fs::exists(regular)) {
-    io.Fonts->AddFontFromFileTTF(regular, font_size);
-    if (fs::exists(symbols)) io.Fonts->AddFontFromFileTTF(symbols, font_size, &merge);
+  const float font_size = 16.0f * g_scale;
+
+  std::string regular_path;
+  std::string bold_path;
+  std::string symbols_path;
+
+#ifndef _WIN32
+  regular_path = QueryFontConfig("sans-serif");
+  bold_path = QueryFontConfig("sans-serif:weight=bold");
+  symbols_path = QueryFontConfig("DejaVu Sans");
+  if (symbols_path.empty()) symbols_path = QueryFontConfig("symbol");
+
+  // Fallbacks if Fontconfig returned empty or inaccessible paths
+  if (regular_path.empty() || !fs::exists(regular_path)) {
+    const char* kRegularFallbacks[] = {
+      "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+      "/usr/share/fonts/TTF/DejaVuSans.ttf",
+      "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
+      "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    };
+    for (const char* p : kRegularFallbacks) {
+      if (fs::exists(p)) { regular_path = p; break; }
+    }
   }
-  if (fs::exists(bold)) {
-    g_bold = io.Fonts->AddFontFromFileTTF(bold, font_size);
-    if (fs::exists(symbols)) io.Fonts->AddFontFromFileTTF(symbols, font_size, &merge);
+  if (bold_path.empty() || !fs::exists(bold_path)) {
+    const char* kBoldFallbacks[] = {
+      "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+      "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+      "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
+      "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    };
+    for (const char* p : kBoldFallbacks) {
+      if (fs::exists(p)) { bold_path = p; break; }
+    }
   }
+  if (symbols_path.empty() || !fs::exists(symbols_path)) {
+    const char* kSymbolFallbacks[] = {
+      "/usr/share/fonts/TTF/DejaVuSans.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+      "/usr/share/fonts/noto/NotoSansSymbols-Regular.ttf",
+      "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
+    };
+    for (const char* p : kSymbolFallbacks) {
+      if (fs::exists(p)) { symbols_path = p; break; }
+    }
+  }
+#else
+  regular_path = "C:\\Windows\\Fonts\\segoeui.ttf";
+  bold_path = "C:\\Windows\\Fonts\\seguisb.ttf";
+  symbols_path = "C:\\Windows\\Fonts\\seguisym.ttf";
+#endif
+
+  static const ImWchar kGlyphRanges[] = {
+    0x0020, 0x00FF, // Basic Latin + Latin Supplement
+    0x0100, 0x017F, // Latin Extended-A
+    0x2000, 0x206F, // General Punctuation
+    0x2190, 0x21FF, // Arrows
+    0x2700, 0x27BF, // Dingbats
+    0,
+  };
+
+  ImFontConfig font_cfg;
+  font_cfg.OversampleH = 2;
+  font_cfg.OversampleV = 2;
+
+  ImFontConfig merge_cfg;
+  merge_cfg.MergeMode = true;
+  merge_cfg.OversampleH = 2;
+  merge_cfg.OversampleV = 2;
+
+  if (!regular_path.empty() && fs::exists(regular_path)) {
+    io.Fonts->AddFontFromFileTTF(regular_path.c_str(), font_size, &font_cfg, kGlyphRanges);
+    if (!symbols_path.empty() && fs::exists(symbols_path) && symbols_path != regular_path) {
+      io.Fonts->AddFontFromFileTTF(symbols_path.c_str(), font_size, &merge_cfg, kGlyphRanges);
+    }
+  }
+  if (!bold_path.empty() && fs::exists(bold_path)) {
+    g_bold = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), font_size, &font_cfg, kGlyphRanges);
+    if (!symbols_path.empty() && fs::exists(symbols_path) && symbols_path != bold_path) {
+      io.Fonts->AddFontFromFileTTF(symbols_path.c_str(), font_size, &merge_cfg, kGlyphRanges);
+    }
+  }
+
+  if (io.Fonts->Fonts.empty()) {
+    io.Fonts->AddFontDefault();
+  }
+
   ImGui::GetStyle().FontSizeBase = font_size;
   ImGui_ImplSDL3_InitForSDLGPU(app.window);
   ImGui_ImplSDLGPU3_InitInfo gpu_info = {};
@@ -3239,22 +3512,30 @@ int main(int argc, char** argv) {
   while (running) {
     const bool capture_now = !screenshot.empty() && ++frames == screenshot_frame;
     SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-      if (app.capture_index >= 0 && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
-        auto& bind = app.settings.binds[app.capture_index];
-        if (event.key.scancode != SDL_SCANCODE_ESCAPE) {
-          std::string name = KeyName(event.key.scancode);
-          if (!name.empty()) {
-            if ((event.key.mod & SDL_KMOD_SHIFT) && name != "Shift") name = "Shift+" + name;
-            bind.keys = app.capture_append && !bind.keys.empty() ? bind.keys + "," + name : name;
-            app.Save();
+    bool has_event = false;
+    if (!capture_now && !app.TaskRunning() && app.capture_index < 0 && !app.game) {
+      has_event = SDL_WaitEventTimeout(&event, 16);
+    } else {
+      has_event = SDL_PollEvent(&event);
+    }
+    if (has_event) {
+      do {
+        if (app.capture_index >= 0 && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+          auto& bind = app.settings.binds[app.capture_index];
+          if (event.key.scancode != SDL_SCANCODE_ESCAPE) {
+            std::string name = KeyName(event.key.scancode);
+            if (!name.empty()) {
+              if ((event.key.mod & SDL_KMOD_SHIFT) && name != "Shift") name = "Shift+" + name;
+              bind.keys = app.capture_append && !bind.keys.empty() ? bind.keys + "," + name : name;
+              app.Save();
+            }
           }
+          app.capture_index = -1;
+          continue;  // don't let ImGui see the captured key
         }
-        app.capture_index = -1;
-        continue;  // don't let ImGui see the captured key
-      }
-      ImGui_ImplSDL3_ProcessEvent(&event);
-      if (event.type == SDL_EVENT_QUIT) running = false;
+        ImGui_ImplSDL3_ProcessEvent(&event);
+        if (event.type == SDL_EVENT_QUIT) running = false;
+      } while (SDL_PollEvent(&event));
     }
     if (app.wheel_monitor) {
       app.wheel_monitor->SetActive(
@@ -3319,8 +3600,8 @@ int main(int argc, char** argv) {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
                      ImGuiWindowFlags_NoScrollWithMouse);
 
-    // Left: the cover column (fixed width, the cover shown whole).
-    const float cover_w = CoverWidth();
+    // Left: the cover column (adaptive width, the cover shown whole).
+    const float cover_w = CoverWidth(vp->Size.x);
     ImGui::BeginChild("##cover", ImVec2(cover_w, vp->Size.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
     CoverPanel(app, ImVec2(cover_w, vp->Size.y));
     ImGui::EndChild();

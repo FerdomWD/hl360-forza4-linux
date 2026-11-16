@@ -11,6 +11,7 @@ class Sha256 {
  public:
   Sha256();
   void Update(const void* data, size_t size);
+  void Digest(uint8_t out[32]);  // finalizes and copies 32-byte raw hash
   std::string HexDigest();  // finalizes
 
  private:

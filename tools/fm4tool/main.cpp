@@ -21,10 +21,13 @@
 //       hash Xenia uses for .patch.toml files (sections.txt).
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <queue>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -44,6 +47,14 @@ namespace fs = std::filesystem;
 
 static constexpr char kDlcContentDir[] = "Content/0000000000000000/4D530910/00000002";
 
+static fs::path RelativePath(const std::string& path_str) {
+  fs::path p = rex::to_path(path_str);
+  if (p.is_absolute() || p.has_root_directory()) {
+    p = p.relative_path();
+  }
+  return p;
+}
+
 static int ExtractDevice(rex::filesystem::Device& device, const fs::path& out_dir) {
   if (!device.Initialize()) {
     std::fprintf(stderr, "cannot read %s\n", out_dir.string().c_str());
@@ -60,7 +71,7 @@ static int ExtractDevice(rex::filesystem::Device& device, const fs::path& out_di
     for (auto& child : entry->children()) {
       queue.push(child.get());
     }
-    auto dest = out_dir / rex::to_path(entry->path());
+    auto dest = out_dir / RelativePath(entry->path());
     if (entry->attributes() & rex::filesystem::kFileAttributeDirectory) {
       fs::create_directories(dest);
       continue;
@@ -143,7 +154,7 @@ static int InstallPackages(const fs::path& game_dir, const fs::path& user_dir,
       auto* entry = queue.front();
       queue.pop();
       for (auto& child : entry->children()) queue.push(child.get());
-      longest = std::max(longest, (install_root / rex::to_path(entry->path())).wstring().size());
+      longest = std::max(longest, (install_root / RelativePath(entry->path())).wstring().size());
     }
     if (longest > 259) {
       std::printf("%s: FAILED (path too long: %zu characters, at most 259; choose a shorter user data folder)\n",
@@ -160,17 +171,82 @@ static int InstallPackages(const fs::path& game_dir, const fs::path& user_dir,
   return 0;
 }
 
+static bool IsStfsPackage(const fs::path& p) {
+  std::error_code ec;
+  if (!fs::is_regular_file(p, ec) || fs::file_size(p, ec) < 0x411 + 256) {
+    return false;
+  }
+  std::ifstream f(p, std::ios::binary);
+  if (!f) return false;
+  char magic[4] = {};
+  if (!f.read(magic, 4)) return false;
+  return std::memcmp(magic, "CON ", 4) == 0 ||
+         std::memcmp(magic, "LIVE", 4) == 0 ||
+         std::memcmp(magic, "PIRS", 4) == 0;
+}
+
 static int InstallDlc(const fs::path& game_dir, const fs::path& disc2_dir,
                       const fs::path& user_dir) {
-  fs::path src = disc2_dir / kDlcContentDir;
-  if (!fs::is_directory(src)) {
-    std::fprintf(stderr, "%s is not the FM4 content install disc\n", disc2_dir.string().c_str());
+  std::vector<fs::path> packages;
+  std::error_code ec;
+
+  if (!fs::is_directory(disc2_dir, ec)) {
+    std::fprintf(stderr, "%s is not a directory\n", disc2_dir.string().c_str());
     return 1;
   }
-  std::vector<fs::path> packages;
-  for (const auto& package : fs::directory_iterator(src)) {
-    if (package.is_regular_file()) packages.push_back(package.path());
+
+  // 1. Try case-insensitive traversal for kDlcContentDir
+  fs::path current = disc2_dir;
+  std::stringstream ss(kDlcContentDir);
+  std::string part;
+  bool found_content_dir = true;
+  while (std::getline(ss, part, '/')) {
+    if (part.empty()) continue;
+    bool found_part = false;
+    for (const auto& entry : fs::directory_iterator(current, ec)) {
+      if (entry.is_directory(ec)) {
+        std::string name = entry.path().filename().string();
+        if (name.size() == part.size() &&
+            std::equal(name.begin(), name.end(), part.begin(),
+                       [](unsigned char a, unsigned char b) {
+                         return std::tolower(a) == std::tolower(b);
+                       })) {
+          current = entry.path();
+          found_part = true;
+          break;
+        }
+      }
+    }
+    if (!found_part) {
+      found_content_dir = false;
+      break;
+    }
   }
+
+  if (found_content_dir && fs::is_directory(current, ec)) {
+    for (const auto& entry : fs::directory_iterator(current, ec)) {
+      if (entry.is_regular_file(ec) && IsStfsPackage(entry.path())) {
+        packages.push_back(entry.path());
+      }
+    }
+  }
+
+  // 2. If no packages found in the canonical directory, recursively scan disc2_dir
+  if (packages.empty()) {
+    for (const auto& entry : fs::recursive_directory_iterator(disc2_dir, fs::directory_options::skip_permission_denied, ec)) {
+      if (entry.is_regular_file(ec) && IsStfsPackage(entry.path())) {
+        packages.push_back(entry.path());
+      }
+    }
+  }
+
+  if (packages.empty()) {
+    std::fprintf(stderr, "%s is not the FM4 content install disc (no STFS packages found)\n",
+                 disc2_dir.string().c_str());
+    return 1;
+  }
+
+  std::sort(packages.begin(), packages.end());
   return InstallPackages(game_dir, user_dir, packages);
 }
 

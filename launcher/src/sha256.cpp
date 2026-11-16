@@ -85,7 +85,7 @@ void Sha256::Update(const void* data, size_t size) {
   buffered_ = size;
 }
 
-std::string Sha256::HexDigest() {
+void Sha256::Digest(uint8_t out[32]) {
   const uint64_t bits = length_ * 8;
   const uint8_t pad = 0x80;
   Update(&pad, 1);
@@ -98,12 +98,23 @@ std::string Sha256::HexDigest() {
     len[i] = uint8_t(bits >> (56 - 8 * i));
   }
   Update(len, 8);
+  for (int i = 0; i < 8; ++i) {
+    out[i * 4 + 0] = uint8_t(state_[i] >> 24);
+    out[i * 4 + 1] = uint8_t(state_[i] >> 16);
+    out[i * 4 + 2] = uint8_t(state_[i] >> 8);
+    out[i * 4 + 3] = uint8_t(state_[i]);
+  }
+}
+
+std::string Sha256::HexDigest() {
+  uint8_t raw[32];
+  Digest(raw);
   static const char* kHex = "0123456789abcdef";
   std::string out;
-  for (uint32_t v : state_) {
-    for (int shift = 28; shift >= 0; shift -= 4) {
-      out += kHex[(v >> shift) & 0xF];
-    }
+  out.reserve(64);
+  for (int i = 0; i < 32; ++i) {
+    out += kHex[(raw[i] >> 4) & 0xF];
+    out += kHex[raw[i] & 0xF];
   }
   return out;
 }

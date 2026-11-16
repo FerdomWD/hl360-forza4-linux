@@ -24,6 +24,7 @@ set(FM4_SOURCES
     src/crash_handler.cpp
     src/frame_stats.cpp
     src/file_signatures.cpp
+    launcher/src/sha256.cpp
     src/wheel.cpp
     src/wheel_mapping.cpp
     src/wheel_input.cpp
@@ -56,16 +57,22 @@ else()
 endif()
 rexglue_setup_target(fm4 GPU_PLUGINS ${FM4_GPU_PLUGIN})
 target_compile_definitions(fm4 PRIVATE FM4_GPU_PLUGIN="${FM4_GPU_PLUGIN}")
+get_filename_component(FM4_SDK_PREFIX "${rexglue_DIR}/../../.." ABSOLUTE)
 if(FM4_GPU_PLUGIN STREQUAL "fh1")
     target_compile_definitions(fm4 PRIVATE FM4_SDK_DEFINES_GPU_BACKEND)
     # DLSS and FSR 2/3 runtimes, kept in the SDK install (patches/shiftglue/README.md);
     # the renderer loads them from upscalers/ beside the executable.
-    get_filename_component(FM4_SDK_PREFIX "${rexglue_DIR}/../../.." ABSOLUTE)
     if(EXISTS "${FM4_SDK_PREFIX}/upscalers")
         add_custom_command(TARGET fm4 POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${FM4_SDK_PREFIX}/upscalers" "$<TARGET_FILE_DIR:fm4>/upscalers")
     endif()
+endif()
+
+if(EXISTS "${FM4_SDK_PREFIX}/lib/librexruntime.so")
+    add_custom_command(TARGET fm4 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${FM4_SDK_PREFIX}/lib/librexruntime.so" $<TARGET_FILE_DIR:fm4>)
 endif()
 
 if(WIN32)
@@ -86,10 +93,16 @@ add_custom_command(TARGET fm4tool POST_BUILD
 # FM4 launcher, adapted from FM3; dependencies are vendored for offline builds.
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
 find_package(SDL3 REQUIRED CONFIG)
+if(TARGET SDL3::SDL3-static)
+    set(FM4_SDL3_TARGET SDL3::SDL3-static)
+else()
+    set(FM4_SDL3_TARGET SDL3::SDL3)
+endif()
+
 add_executable(fm4-wheel-probe tools/wheel_probe.cpp src/wheel.cpp src/wheel_mapping.cpp)
-target_link_libraries(fm4-wheel-probe PRIVATE SDL3::SDL3-static)
-add_executable(fm4-launcher WIN32
-    resources/fm4.rc
+target_link_libraries(fm4-wheel-probe PRIVATE ${FM4_SDL3_TARGET})
+
+set(LAUNCHER_SOURCES
     launcher/src/main.cpp
     launcher/src/graphics_fixes.cpp
     launcher/src/installer.cpp
@@ -104,22 +117,51 @@ add_executable(fm4-launcher WIN32
     ${IMGUI_DIR}/imgui_widgets.cpp
     ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
     ${IMGUI_DIR}/backends/imgui_impl_sdlgpu3.cpp)
+
+if(NOT WIN32)
+    find_package(Fontconfig REQUIRED)
+endif()
+
+if(WIN32)
+    add_executable(fm4-launcher WIN32 resources/fm4.rc ${LAUNCHER_SOURCES})
+    target_link_libraries(fm4-launcher PRIVATE ${FM4_SDL3_TARGET} dbghelp)
+else()
+    add_executable(fm4-launcher ${LAUNCHER_SOURCES})
+    target_link_libraries(fm4-launcher PRIVATE ${FM4_SDL3_TARGET} Fontconfig::Fontconfig pthread)
+endif()
 target_include_directories(fm4-launcher BEFORE PRIVATE
     ${IMGUI_DIR} ${IMGUI_DIR}/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/tomlplusplus/include)
-target_link_libraries(fm4-launcher PRIVATE SDL3::SDL3-static dbghelp)
 target_compile_options(fm4-launcher PRIVATE -gline-tables-only)
 target_link_options(fm4-launcher PRIVATE -g)
 set_target_properties(fm4-launcher PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
-add_dependencies(fm4-launcher fm4tool)
+if(TARGET fm4tool)
+    add_dependencies(fm4-launcher fm4tool)
+endif()
 add_custom_command(TARGET fm4-launcher POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_CURRENT_SOURCE_DIR}/launcher/data/game_files.sha256
         ${CMAKE_CURRENT_SOURCE_DIR}/config/fm4.toml
-        $<TARGET_FILE_DIR:fm4-launcher>)
+        ${CMAKE_CURRENT_SOURCE_DIR}/fm4pc.ico
+        $<TARGET_FILE_DIR:fm4-launcher>
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:fm4-launcher>/resources
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icon_256.png
+        $<TARGET_FILE_DIR:fm4-launcher>/resources/icon_256.png)
 configure_file(scripts/install-forza-plus.ps1 ${CMAKE_CURRENT_BINARY_DIR}/install-forza-plus.ps1 COPYONLY)
 configure_file(scripts/uninstall-forza-plus.ps1 ${CMAKE_CURRENT_BINARY_DIR}/uninstall-forza-plus.ps1 COPYONLY)
+configure_file(scripts/install-forza-plus.py ${CMAKE_CURRENT_BINARY_DIR}/install-forza-plus.py COPYONLY)
+configure_file(scripts/uninstall-forza-plus.py ${CMAKE_CURRENT_BINARY_DIR}/uninstall-forza-plus.py COPYONLY)
+
+add_executable(fm4-instant-launcher tools/instant_launcher/main.cpp)
+set_target_properties(fm4-instant-launcher PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    OUTPUT_NAME "Forza Motorsport 4")
+if(TARGET fm4-launcher)
+    add_dependencies(fm4-instant-launcher fm4-launcher)
+endif()
 
 option(FM4_BUILD_TESTS "Build launcher compatibility regression checks" OFF)
 if(FM4_BUILD_TESTS)
@@ -134,21 +176,23 @@ if(FM4_BUILD_TESTS)
     add_test(NAME launcher-compatibility COMMAND fm4-launcher-tests)
     add_executable(fm4-wheel-tests tests/wheel_tests.cpp src/wheel_mapping.cpp launcher/src/settings.cpp)
     target_include_directories(fm4-wheel-tests PRIVATE thirdparty/tomlplusplus/include)
-    target_link_libraries(fm4-wheel-tests PRIVATE SDL3::SDL3-static)
+    target_link_libraries(fm4-wheel-tests PRIVATE ${FM4_SDL3_TARGET})
     set_target_properties(fm4-wheel-tests PROPERTIES CXX_STANDARD 17)
     add_test(NAME wheel-input COMMAND fm4-wheel-tests)
-    add_executable(fm4-wheel-ffb-tests tests/wheel_ffb_tests.cpp src/wheel_ffb.cpp src/wheel_mapping.cpp)
-    target_include_directories(fm4-wheel-ffb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(fm4-wheel-ffb-tests PRIVATE rex::runtime)
-    add_test(NAME wheel-native-ffb COMMAND fm4-wheel-ffb-tests)
-    add_executable(fm4-wheel-runtime-tests tests/wheel_runtime_tests.cpp src/wheel.cpp src/wheel_mapping.cpp src/wheel_input.cpp src/scripted_input.cpp)
-    target_link_libraries(fm4-wheel-runtime-tests PRIVATE rex::runtime)
-    add_test(NAME wheel-runtime COMMAND fm4-wheel-runtime-tests)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/fm4_pch.h")
+        add_executable(fm4-wheel-ffb-tests tests/wheel_ffb_tests.cpp src/wheel_ffb.cpp src/wheel_mapping.cpp)
+        target_include_directories(fm4-wheel-ffb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_libraries(fm4-wheel-ffb-tests PRIVATE rex::runtime)
+        add_test(NAME wheel-native-ffb COMMAND fm4-wheel-ffb-tests)
+        add_executable(fm4-wheel-runtime-tests tests/wheel_runtime_tests.cpp src/wheel.cpp src/wheel_mapping.cpp src/wheel_input.cpp src/scripted_input.cpp)
+        target_link_libraries(fm4-wheel-runtime-tests PRIVATE rex::runtime)
+        add_test(NAME wheel-runtime COMMAND fm4-wheel-runtime-tests)
+    endif()
     add_executable(fm4-wheel-haptic-backend-tests tests/wheel_haptic_backend_tests.cpp)
-    target_link_libraries(fm4-wheel-haptic-backend-tests PRIVATE SDL3::SDL3-static)
+    target_link_libraries(fm4-wheel-haptic-backend-tests PRIVATE ${FM4_SDL3_TARGET})
     add_test(NAME wheel-haptic-backend COMMAND fm4-wheel-haptic-backend-tests)
     add_executable(fm4-wheel-ui-tests tests/wheel_ui_tests.cpp src/wheel.cpp src/wheel_mapping.cpp)
-    target_link_libraries(fm4-wheel-ui-tests PRIVATE SDL3::SDL3-static)
+    target_link_libraries(fm4-wheel-ui-tests PRIVATE ${FM4_SDL3_TARGET})
     add_test(NAME wheel-ui COMMAND fm4-wheel-ui-tests)
     set_tests_properties(wheel-ui PROPERTIES TIMEOUT 20)
     if(WIN32)
@@ -156,5 +200,8 @@ if(FM4_BUILD_TESTS)
             -File ${CMAKE_CURRENT_SOURCE_DIR}/tests/forza_plus_tests.ps1
             -Installer ${CMAKE_CURRENT_SOURCE_DIR}/scripts/install-forza-plus.ps1
             -OutputDir ${CMAKE_CURRENT_BINARY_DIR}/forza-plus-tests)
+    else()
+        add_test(NAME forza-plus-installer COMMAND python3
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/forza_plus_tests.py)
     endif()
 endif()

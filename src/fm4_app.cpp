@@ -16,7 +16,12 @@
 #include <chrono>
 #include <thread>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <rex/cvar.h>
 #include <rex/filesystem/devices/host_path_device.h>
@@ -148,7 +153,11 @@ void Fm4App::OnPostLoadXexImage() {
 
 void Fm4App::OnPostSetup() {
   fm4::wheel::SetFocus(window() && window()->HasFocus());
-  if (window()) window()->AddInputListener(&fullscreen_toggle_, 100);
+  if (window()) {
+    window()->AddInputListener(&fullscreen_toggle_, 100);
+    window()->SetCursorAutoHideDelayMs(3000);
+    window()->SetCursorVisibility(rex::ui::Window::CursorVisibility::kAutoHidden);
+  }
   fm4::camera::AttachKeys(window());
   if (window()) {
     fm4::wide_view::SetWindowSize(window()->GetActualPhysicalWidth(),
@@ -209,7 +218,11 @@ void StartExitWatchdog() {
       rex::FlushLogging();
     }).detach();
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
+#if defined(_WIN32)
     TerminateProcess(GetCurrentProcess(), 0);
+#else
+    _exit(0);
+#endif
   }).detach();
 }
 

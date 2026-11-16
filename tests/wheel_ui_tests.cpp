@@ -13,7 +13,7 @@ static void SDLCALL Updated(void* data) {
 }
 int main() {
   try {
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen,dummy");
     Check(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK), SDL_GetError());
     auto* window = SDL_CreateWindow("Wheel UI test", 320, 240, SDL_WINDOW_HIDDEN);
     Check(window != nullptr, SDL_GetError());

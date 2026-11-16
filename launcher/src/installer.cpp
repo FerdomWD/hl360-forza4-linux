@@ -267,6 +267,16 @@ int RunTool(const fs::path& tool, const std::vector<std::string>& args,
                        SDL_GetError());
     return -1;
   }
+  fs::path log_path = tool.parent_path() / "logs" / "installer.log";
+  std::error_code ec;
+  fs::create_directories(log_path.parent_path(), ec);
+  std::ofstream log(log_path, std::ios::app);
+  if (log) {
+    log << "\n=== fm4tool";
+    for (const auto& a : args) log << " " << a;
+    log << " ===\n";
+  }
+
   SDL_IOStream* out = SDL_GetProcessOutput(proc);
   std::string pending;
   char buf[4096];
@@ -285,6 +295,7 @@ int RunTool(const fs::path& tool, const std::vector<std::string>& args,
     for (size_t nl; (nl = pending.find('\n')) != std::string::npos;) {
       std::string line = pending.substr(0, nl);
       if (!line.empty() && line.back() == '\r') line.pop_back();
+      if (log) log << line << "\n";
       on_line(line);
       pending.erase(0, nl + 1);
     }
@@ -293,7 +304,11 @@ int RunTool(const fs::path& tool, const std::vector<std::string>& args,
       break;
     }
   }
-  if (!pending.empty()) on_line(pending);
+  if (!pending.empty()) {
+    if (log) log << pending << "\n";
+    on_line(pending);
+  }
+  if (log) log.flush();
   int exit_code = -1;
   SDL_WaitProcess(proc, true, &exit_code);
   SDL_DestroyProcess(proc);
@@ -305,23 +320,35 @@ int RunTool(const fs::path& tool, const std::vector<std::string>& args,
 bool InstallForzaPlus(const fs::path& script, const fs::path& zip, const fs::path& update,
                       const fs::path& game, const fs::path& user, const std::string& mode,
                       TaskProgress& progress) {
+#ifdef _WIN32
   const char* system = SDL_getenv("SystemRoot");
   if (!system) { progress.SetStatus("SystemRoot is unavailable"); return false; }
-  const auto powershell = fs::u8path(system) / "System32/WindowsPowerShell/v1.0/powershell.exe";
+  const auto runner = fs::u8path(system) / "System32/WindowsPowerShell/v1.0/powershell.exe";
   std::vector<std::string> args{"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
       "-File", script.u8string(), "-BaseZip", zip.u8string(), "-GameDir", game.u8string(),
       "-UserDir", user.u8string(), "-Mode", mode};
   if (!update.empty()) { args.push_back("-UpdateZip"); args.push_back(update.u8string()); }
-  return RunTool(powershell, args, [&](const std::string& line) { progress.SetStatus(line); }, progress) == 0;
+#else
+  const auto runner = fs::u8path("/usr/bin/python3");
+  std::vector<std::string> args{script.u8string(), "--base-zip", zip.u8string(),
+      "--game-dir", game.u8string(), "--user-dir", user.u8string(), "--mode", mode};
+  if (!update.empty()) { args.push_back("--update-zip"); args.push_back(update.u8string()); }
+#endif
+  return RunTool(runner, args, [&](const std::string& line) { progress.SetStatus(line); }, progress) == 0;
 }
 
 bool UninstallForzaPlus(const fs::path& script,const fs::path& game,const fs::path& user,TaskProgress& progress) {
+#ifdef _WIN32
   const char* system=SDL_getenv("SystemRoot");
   if(!system) {progress.SetStatus("SystemRoot is unavailable");return false;}
-  const auto powershell=fs::u8path(system)/"System32/WindowsPowerShell/v1.0/powershell.exe";
+  const auto runner=fs::u8path(system)/"System32/WindowsPowerShell/v1.0/powershell.exe";
   const std::vector<std::string> args{"-NoLogo","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass",
       "-File",script.u8string(),"-GameDir",game.u8string(),"-UserDir",user.u8string()};
-  return RunTool(powershell,args,[&](const std::string& line){progress.SetStatus(line);},progress)==0;
+#else
+  const auto runner=fs::u8path("/usr/bin/python3");
+  const std::vector<std::string> args{script.u8string(),"--game-dir",game.u8string(),"--user-dir",user.u8string()};
+#endif
+  return RunTool(runner,args,[&](const std::string& line){progress.SetStatus(line);},progress)==0;
 }
 
 std::vector<ManifestEntry> LoadManifest(const fs::path& file) {
@@ -450,7 +477,11 @@ bool InstallContentDisc(const fs::path& iso, const fs::path& game_dir, const fs:
           ++installed;
           progress.done = copy_total + copy_total * installed / files.size();
           progress.SetStatus(std::string(L("Installed ", "Instalado ")) + line.substr(0, line.find(':')));
-        } else if (line.find("FAILED") != std::string::npos || line.find("cannot") != std::string::npos) {
+        } else if (!line.empty() && (line.find("FAILED") != std::string::npos ||
+                                     line.find("cannot") != std::string::npos ||
+                                     line.find("not") != std::string::npos ||
+                                     line.find("error") != std::string::npos ||
+                                     line.find("Error") != std::string::npos)) {
           last_error = line;
         }
       },
@@ -581,7 +612,11 @@ bool InstallContentPackages(const std::vector<fs::path>& packages, const fs::pat
           if (installed < sizes.size()) progress.done += sizes[installed];
           ++installed;
           progress.SetStatus(std::string(L("Installed ", "Instalado ")) + line.substr(0, line.find(':')));
-        } else if (line.find("FAILED") != std::string::npos || line.find("cannot") != std::string::npos) {
+        } else if (!line.empty() && (line.find("FAILED") != std::string::npos ||
+                                     line.find("cannot") != std::string::npos ||
+                                     line.find("not") != std::string::npos ||
+                                     line.find("error") != std::string::npos ||
+                                     line.find("Error") != std::string::npos)) {
           last_error = line;
         }
       },

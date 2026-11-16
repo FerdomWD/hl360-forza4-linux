@@ -216,7 +216,7 @@ void WriteWheel(toml::table& out, const fm4::wheel::Settings& w) {
 void Settings::ApplyGraphicsPreset(int preset) {
   graphics_preset = std::clamp(preset, 0, 3);
   if (graphics_preset == 3) return;
-  resolution_scale = graphics_preset == 0 ? 1 : 2;
+  resolution_scale = graphics_preset == 0 ? 1.0 : 2.0;
   anisotropic_override = 3 + graphics_preset;
   present_effect = graphics_preset == 2 ? "bilinear" : "fsr";
   swap_post_effect = "none";
@@ -289,7 +289,7 @@ bool Settings::Load(const std::filesystem::path& file) {
   Read(t,"video_mode_refresh_rate",refresh_rate);
   experimental_120fps=refresh_rate==120.0;
 
-  ReadInt(t, "resolution_scale", resolution_scale);
+  if (auto v = t["resolution_scale"].value<double>()) resolution_scale = *v;
   ReadInt(t, "anisotropic_override", anisotropic_override);
   graphics_preset = 3;
   ReadInt(t, "graphics_preset", graphics_preset);
@@ -308,7 +308,7 @@ bool Settings::Load(const std::filesystem::path& file) {
   present_fsr_sharpness_reduction = 0.2;
   async_shader_compilation = false;
   readback_resolve = "none";
-  resolution_scale = std::clamp(resolution_scale, 1, 4);
+  resolution_scale = std::clamp(resolution_scale, 1.0, 4.0);
   anisotropic_override = std::clamp(anisotropic_override, 0, 5);
   swap_post_effect = "none";
   if (graphics_preset < 3) ApplyGraphicsPreset(graphics_preset);
@@ -368,7 +368,11 @@ bool Settings::Save(const std::filesystem::path& file) const {
   t.insert("display_hud_edges", display_hud_edges);
 
   t.insert("gpu_backend", gpu_backend);
-  t.insert("resolution_scale", resolution_scale);
+  if (std::floor(resolution_scale) == resolution_scale) {
+    t.insert("resolution_scale", int64_t(resolution_scale));
+  } else {
+    t.insert("resolution_scale", resolution_scale);
+  }
   t.insert("graphics_preset", graphics_preset);
   t.insert("scenario_exterior_shadows", exterior_shadows);
   t.insert("scenario_car_detail", car_detail);

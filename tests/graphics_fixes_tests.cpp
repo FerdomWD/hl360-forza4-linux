@@ -136,10 +136,17 @@ int main() {
       Require(reloaded.experimental_120fps == loaded.experimental_120fps, "preset changed frame rate");
     }
     loaded.ApplyGraphicsPreset(3);
-    loaded.resolution_scale = 3;
+    loaded.resolution_scale = 1.5;
     loaded.anisotropic_override = 2;
     loaded.present_effect = "cas";
     loaded.experimental_120fps = true;
+    Require(loaded.Save(root / "settings.toml"), "custom 1.5x 1080p save failed");
+    Settings custom1080;
+    Require(custom1080.Load(root / "settings.toml") && custom1080.graphics_preset == 3 &&
+        custom1080.resolution_scale == 1.5 && custom1080.anisotropic_override == 2 &&
+        custom1080.present_effect == "cas" && custom1080.experimental_120fps,
+        "custom 1.5x 1080p choice lost on reload");
+    loaded.resolution_scale = 3;
     Require(loaded.Save(root / "settings.toml"), "custom save failed");
     Settings custom;
     Require(custom.Load(root / "settings.toml") && custom.graphics_preset == 3 &&

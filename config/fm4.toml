@@ -50,8 +50,12 @@ vulkan_small_texture_copy_views = false
 fh1_readback_small_float_resolves = false
 guest_reservation_sections_unlocked = false
 rtl_critical_section_pcr_thread = false
-xma_direct_decode = false
+xma_direct_decode = true
+xma_decode_kicks_inline = true
+xma_relaxed_padding_admission = true
 xma_lazy_decoder_state = false
+audio_output_mode = 'stereo'
+audio_maxqframes = 32
 
 # Medium preset: 2x rendering, 8x anisotropic filtering, FSR.
 graphics_preset = 1

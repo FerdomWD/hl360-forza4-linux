@@ -3,15 +3,6 @@
 // Big-endian block size/count, offset/size index, NUL names and SHA-256 per 32 KiB.
 #include "file_signatures.h"
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <bcrypt.h>
-
 #include <cstring>
 #include <algorithm>
 #include <fstream>
@@ -19,6 +10,7 @@
 #include <vector>
 #include <stdexcept>
 #include "../launcher/src/safe_path.h"
+#include "../launcher/src/sha256.h"
 
 #include <rex/logging/macros.h>
 #include <rex/runtime.h>
@@ -41,8 +33,10 @@ void StoreBe32(uint8_t* p, uint32_t v) {
 }
 
 bool Sha256(const uint8_t* data, size_t size, uint8_t out[kHashSize]) {
-  return BCRYPT_SUCCESS(BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, const_cast<uint8_t*>(data),
-                                   ULONG(size), out, kHashSize));
+  launcher::Sha256 hasher;
+  hasher.Update(data, size);
+  hasher.Digest(out);
+  return true;
 }
 
 struct Entry {

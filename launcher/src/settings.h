@@ -54,7 +54,7 @@ struct Settings {
 
   // Quality
   std::string gpu_backend = "vulkan";  // d3d12 | vulkan
-  int resolution_scale = 2;      // internal render scale over 1280x720
+  double resolution_scale = 2.0;  // internal render scale over 1280x720
   int anisotropic_override = 4;  // 0..5 = off,1x,2x,4x,8x,16x
   std::string swap_post_effect = "none";    // none | fxaa | fxaa_extreme
   std::string present_effect = "fsr";  // bilinear | cas | fsr | fsr2 | fsr3 | dlss
