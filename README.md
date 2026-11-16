@@ -2,7 +2,7 @@
 
 Forza Motorsport 4 on Linux, with a dedicated launcher, optional Project Forza Plus 4 integration, and experimental direct-drive wheel support.
 
-# WORKS THE SAME WAY ON WINDOWS BTW.
+# WORKS THE SAME WAY LIKE ON WINDOWS BTW.
 [Getting started](#getting-started) · [Supported version](#supported-version) · [Launcher](#launcher) · [Wheels and FFB](#steering-wheels-and-force-feedback) · [Build](#building-from-source) · [Support](#support)
 
 ![Ferrari in the FM4 garage](doc/img/Screenshot_20261116_115650.jxl)
