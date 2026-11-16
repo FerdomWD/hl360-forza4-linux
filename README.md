@@ -5,7 +5,7 @@ Forza Motorsport 4 on Linux, with a dedicated launcher, optional Project Forza P
 # WORKS THE SAME WAY ON WINDOWS BTW.
 [Getting started](#getting-started) · [Supported version](#supported-version) · [Launcher](#launcher) · [Wheels and FFB](#steering-wheels-and-force-feedback) · [Build](#building-from-source) · [Support](#support)
 
-![Ferrari in the FM4 garage](doc/img/vlcsnap-2026-10-16-08h50m02s529.png)
+![Ferrari in the FM4 garage](doc/img/Screenshot_20261116_115650.jxl)
 
 This project translates the Xbox 360 game's PowerPC code into C++ with the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk). The resulting program runs natively on PC, with the runtime providing graphics, audio, input, profiles, storage and content services.
 
