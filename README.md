@@ -1,7 +1,8 @@
-# Forza Motorsport 4 — Native PC Recompilation
+# Forza Motorsport 4 — Native Linux Recompilation
 
-Forza Motorsport 4 on Windows, with a dedicated launcher, optional Project Forza Plus 4 integration, and experimental direct-drive wheel support.
+Forza Motorsport 4 on Linux, with a dedicated launcher, optional Project Forza Plus 4 integration, and experimental direct-drive wheel support.
 
+# WORKS THE SAME WAY ON WINDOWS BTW.
 [Getting started](#getting-started) · [Supported version](#supported-version) · [Launcher](#launcher) · [Wheels and FFB](#steering-wheels-and-force-feedback) · [Build](#building-from-source) · [Support](#support)
 
 ![Ferrari in the FM4 garage](doc/img/vlcsnap-2026-10-16-08h50m02s529.png)
@@ -39,18 +40,18 @@ These hashes identify the **uncompressed ISO files**, not their ZIP archives. Th
 
 ### Requirements
 
-- Windows x64 and a Vulkan-capable GPU for the current Vulkan package.
-- Microsoft Visual C++ 2015–2022 Redistributable, x64.
+- Any Linux Distro (CachyOS Recommended) and a Vulkan-capable GPU for the current Vulkan package.
 - The supported game discs and enough free space for extraction and content installation.
 - Additional space for a separate game/content copy if installing Project Forza Plus 4.
 
 ### Install and play
 
 1. Extract the release package into a short folder, such as `C:\Games\FM4`. Keep its executables, DLLs, configuration and PowerShell scripts together.
-2. Open **fm4-launcher.exe**. The **Instructions** tab provides the disc hashes and setup steps in English or Spanish.
+2. Set permissions to run as executable for these and then open **fm4-launcher**. The **Instructions** tab provides the disc hashes and setup steps in English or Spanish.
 3. Under **Install → Step 1**, select the **Disc 1 ISO**. Wait for extraction and verification.
 4. Under **Step 2**, select the **Disc 2 ISO** to install its four car and track content packages.
 5. Choose or create a profile in **Profiles**, adjust graphics and controls, then press **Play**.
+6. You can press Create Desktop Shortcut to make an instant game launcher shortcut without having to go through the app every time
 
 Extract game ISOs from their ZIP archives before selecting them. Project Forza Plus uses its ZIP archives directly, as described below.
 
@@ -72,7 +73,7 @@ The SDL3 / Dear ImGui launcher has an English/Spanish interface and an integrate
 
 - **Disc installation:** identifies the two supported discs, extracts Disc 1 and installs Disc 2 content with its required licence headers.
 - **Profiles:** named offline profiles with separate save directories.
-- **Graphics:** fullscreen/windowed output, monitor selection, 16:9 output, quality presets, 1x–4x internal resolution, anisotropic filtering, FXAA/FXAA+, and Bilinear, AMD CAS or AMD FSR output scaling.
+- **Graphics:** fullscreen/windowed output, monitor selection, 16:9 output, quality presets, 1x–4x internal resolution (I also added x1.5 which is 1080p), anisotropic filtering, FXAA/FXAA+, and Bilinear, AMD CAS or AMD FSR output scaling.
 - **Frame rate:** default 60 FPS / 60 Hz target and an optional experimental 120 FPS / 120 Hz target.
 - **Controls:** SDL/XInput controllers, keyboard bindings and optional mouse-to-right-stick input.
 - **Wheel:** guided binding from any USB devices, a live wheel/pedal/button view, native force feedback tuning and SimHub telemetry.
@@ -149,49 +150,15 @@ More detail: [graphics and timing](doc/graphics-troubleshooting.md) · [bring-up
 
 ### Tools and SDK
 
-- Visual Studio 2022 Build Tools with MSVC and the Windows SDK.
-- LLVM/Clang, CMake 3.25+ and Ninja.
+. LLVM/Clang, CMake 3.25+ and Ninja.
 - An installed ReXGlue SDK compatible with this project's [tested revision](doc/inputs.md) and the runtime changes under [`patches/sdk`](patches/sdk).
 - The corresponding SDL3 source tree if building the local haptic-enabled SDL library.
 - An extracted supported Disc 1 under `game/disc1/`, including `default.xex`, `XMediaFacade_default.xex` and `SpeechFacade_default.xex`.
 
 There is no `build_sdk.cmd` in this repository. Build/install the SDK separately using its own instructions and review the supplied SDK patches. `scripts/devenv.cmd` currently expects MSVC 2022 Build Tools and LLVM under their standard Windows installation paths; adjust it for other layouts.
 
-From a Windows command prompt in the project directory:
-
-```bat
-set "REXSDK_ROOT=C:\SDK\rexglue"
-
-:: Build a local SDL with DirectInput / haptic support for wheel FFB.
-scripts\build-wheel-sdl.cmd "C:\src\rexglue-sdk\thirdparty\sdl3"
-
-:: Generate the guest code if needed and build the port, launcher and tools.
-scripts\build.cmd release
-
-:: Open the launcher.
-out\build\win-amd64-release\fm4-launcher.exe
-```
 
 Use the SDL version matching your SDK. The local SDL build/install stays under `out/`; it does not modify the shared SDK. Some prebuilt SDK packages have haptics disabled, so the local wheel-enabled library is required for FFB. `FM4_SDL3_ROOT` can override its install location.
-
-To prepare the game with an already-built `fm4tool`:
-
-```bat
-scripts\install_game.cmd "C:\Discs\Disc 1.iso" "C:\Discs\Disc 2.iso"
-```
-
-This extracts the discs and installs Disc 2 packages. Supply/extract Disc 1 before code generation when bootstrapping from a clean source checkout; use an existing helper build or a suitable extractor for that initial step. Generated guest code and game files are not included in source control.
-
-### Regression checks
-
-```bat
-call scripts\devenv.cmd
-cmake --preset win-amd64-release -DCMAKE_PREFIX_PATH="%REXSDK_ROOT%" -DFM4_BUILD_TESTS=ON
-cmake --build --preset win-amd64-release
-ctest --test-dir out\build\win-amd64-release --output-on-failure
-```
-
-The checks cover graphics compatibility/settings, wheel input and calibration, native FFB translation, haptic backend availability, UI polling, and mod install/uninstall/reinstall with save preservation. Automated checks do not certify physical force feedback or complete gameplay compatibility.
 
 ## Configuration and command line
 
@@ -208,9 +175,9 @@ The checks cover graphics compatibility/settings, wheel input and calibration, n
 The game reads the configuration files next to its executable. The launcher also supports:
 
 ```text
-fm4-launcher.exe --import-iso <iso> --game-dir <dir> --user-dir <dir> [--log <file>]
-fm4-launcher.exe --verify --game-dir <dir> [--log <file>]
-fm4-launcher.exe --screenshot <file.bmp> --tab instructions|profiles|graphics|controls|audio|install|support --lang en|es
+fm4-launcher --import-iso <iso> --game-dir <dir> --user-dir <dir> [--log <file>]
+fm4-launcher --verify --game-dir <dir> [--log <file>]
+fm4-launcher --screenshot <file.bmp> --tab instructions|profiles|graphics|controls|audio|install|support --lang en|es
 ```
 
 ## Project layout
@@ -230,8 +197,8 @@ fm4-launcher.exe --screenshot <file.bmp> --tab instructions|profiles|graphics|co
 
 ## Antivirus report
 
-The **v0.3.7 release ZIP** (`FM4-v0.3.7`) has a public
-[VirusTotal report](https://www.virustotal.com/gui/file/01e3845826e223cd2d207f08fb9259292d721469886decf955be0a04c6407bf5/detection).
+The **v0.3.11 release ZIP** (`FM4-v0.3.7`) has a public
+[VirusTotal report]([https://www.virustotal.com/gui/file/01e3845826e223cd2d207f08fb9259292d721469886decf955be0a04c6407bf5/detection](https://www.virustotal.com/gui/file/d2d5c7ce170967874e078f6920dd1ba1400ff64917cf2f5d911ec5b4d62c0d4d?nocache=1)).
 
 SHA-256: `01e3845826e223cd2d207f08fb9259292d721469886decf955be0a04c6407bf5`
 
@@ -241,12 +208,6 @@ confirmed; an unsigned application alone does not establish the cause of an
 antivirus detection. Consult the linked report for current results. This report
 applies to the exact ZIP identified above, not to future releases or modified
 files, and is not a guarantee of safety.
-
-## Support
-
-If you would like to support development or follow updates:
-
-**[Forza Motorsport 4 on PC — Ko-fi](https://ko-fi.com/post/Forza-Motorsport-4-on-PC-Native-Port-Moza-R3-I3B028W026)**
 
 ## Credits and legal notice
 
