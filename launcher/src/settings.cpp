@@ -289,7 +289,12 @@ bool Settings::Load(const std::filesystem::path& file) {
   Read(t,"video_mode_refresh_rate",refresh_rate);
   experimental_120fps=refresh_rate==120.0;
 
-  if (auto v = t["resolution_scale"].value<double>()) resolution_scale = *v;
+  if (auto v = t["resolution_scale"].value<double>()) {
+    resolution_scale = *v;
+    if (resolution_scale > 1.0 && resolution_scale < 2.0) {
+      resolution_scale = 2.0;
+    }
+  }
   ReadInt(t, "anisotropic_override", anisotropic_override);
   graphics_preset = 3;
   ReadInt(t, "graphics_preset", graphics_preset);
@@ -368,11 +373,7 @@ bool Settings::Save(const std::filesystem::path& file) const {
   t.insert("display_hud_edges", display_hud_edges);
 
   t.insert("gpu_backend", gpu_backend);
-  if (std::floor(resolution_scale) == resolution_scale) {
-    t.insert("resolution_scale", int64_t(resolution_scale));
-  } else {
-    t.insert("resolution_scale", resolution_scale);
-  }
+  t.insert("resolution_scale", int64_t(std::round(resolution_scale)));
   t.insert("graphics_preset", graphics_preset);
   t.insert("scenario_exterior_shadows", exterior_shadows);
   t.insert("scenario_car_detail", car_detail);

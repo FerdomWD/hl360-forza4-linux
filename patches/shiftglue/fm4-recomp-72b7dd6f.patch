@@ -178,6 +178,49 @@ index 5df8533..3facdc2 100644
    SafeAreaInsets GetSafeAreaInsets() const override;
    void ApplyConfiguredSizeAndMonitor() override;
    bool SetRelativeMouseMode(bool enable) override;
+diff --git a/src/core/fiber_posix.cpp b/src/core/fiber_posix.cpp
+index 7994b43..3494cf3 100644
+--- a/src/core/fiber_posix.cpp
++++ b/src/core/fiber_posix.cpp
+@@ -196,7 +196,13 @@ Fiber* Fiber::Create(size_t stack_size, void (*entry)(void*), void* arg) {
+ }
+ 
+ void Fiber::SwitchTo(Fiber* target) {
++  if (!target) {
++    return;
++  }
+   Fiber* from = tls_current_;
++  if (!from) {
++    from = ConvertCurrentThread();
++  }
+   tls_current_ = target;
+   rex_fiber_switch(&from->stack_pointer_, target->stack_pointer_);
+ }
+@@ -239,7 +245,13 @@ Fiber* Fiber::Create(size_t stack_size, void (*entry)(void*), void* arg) {
+ }
+ 
+ void Fiber::SwitchTo(Fiber* target) {
++  if (!target) {
++    return;
++  }
+   Fiber* from = tls_current_;
++  if (!from) {
++    from = ConvertCurrentThread();
++  }
+   tls_current_ = target;
+   swapcontext(&from->context_, &target->context_);
+ }
+@@ -249,7 +261,9 @@ void Fiber::SwitchTo(Fiber* target) {
+ void Fiber::Destroy() {
+   // Thread fibers are destroyed from the owning thread itself.
+   if (is_thread_fiber_) {
+-    tls_current_ = nullptr;
++    if (tls_current_ == this) {
++      tls_current_ = nullptr;
++    }
+   } else {
+     assert(this != tls_current_ && "Destroy called on the currently running fiber");
+   }
 diff --git a/src/graphics/pipeline/shader/spirv_translator.cpp b/src/graphics/pipeline/shader/spirv_translator.cpp
 index 829de85..d6db71e 100644
 --- a/src/graphics/pipeline/shader/spirv_translator.cpp
@@ -533,6 +576,21 @@ index 0943f0c..539eee8 100644
      return false;
    }
    if (IsSteeringCandidate(instance_id)) {
+diff --git a/src/kernel/crt/threading.cpp b/src/kernel/crt/threading.cpp
+index d422e59..30453b6 100644
+--- a/src/kernel/crt/threading.cpp
++++ b/src/kernel/crt/threading.cpp
+@@ -326,6 +326,10 @@ void SwitchToFiber_entry(mapped_void lpFiber) {
+     PROFILE_FIBER_ENTER(ks->GetOrCreateFiberName(target_info->uid, thread->name().c_str()));
+   }
+ 
++  if (!thread->main_fiber()) {
++    thread->set_main_fiber(rex::thread::Fiber::ConvertCurrentThread());
++  }
++
+   // Host fiber switch -- suspends here, resumes when switched back
+   cs_scheduler::Callback callback_schedule;
+   rex::thread::Fiber::SwitchTo(target_info->host_fiber);
 diff --git a/src/kernel/xboxkrnl/xboxkrnl_video.cpp b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
 index 8f111f7..665c18e 100644
 --- a/src/kernel/xboxkrnl/xboxkrnl_video.cpp

@@ -1769,11 +1769,10 @@ void TabGraphics(App& app) {
   if (s.graphics_preset == 3 && BeginRows("##q")) {
     Row(L("Render scale", "Escala de renderizado"));
     changed |= Segmented<double>("scale", s.resolution_scale,
-                                 {{1.0, "1x 720p"},
-                                  {1.5, "1.5x 1080p"},
-                                  {2.0, "2x 1440p"},
-                                  {3.0, "3x 4K"},
-                                  {4.0, "4x 5K"}});
+                                 {{1.0, "1x (720p)"},
+                                  {2.0, "2x (1440p)"},
+                                  {3.0, "3x (4K)"},
+                                  {4.0, "4x (5K)"}});
     Row(L("Anisotropic filtering", "Filtrado anisotropico"));
     changed |= Combo<int>("##aniso", s.anisotropic_override,
         {{0, L("Off", "No")}, {1, "1x"}, {2, "2x"}, {3, "4x"}, {4, "8x"}, {5, "16x"}});
